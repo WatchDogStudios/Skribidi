@@ -211,6 +211,14 @@ bool skb_layout_cache_compact(skb_layout_cache_t* cache)
 		skb_hash_table_remove(cache->layouts_lookup, cached_layout->hash);
 		skb_list_remove(&cache->lru, layout_idx, skb__get_lru_item, cache);
 
+		// Destroy the layout itself. The memset below only zeroes the pointer,
+		// so without this every evicted entry permanently leaks a whole
+		// skb_layout_t: attributes, content/shaping runs, glyphs, clusters,
+		// layout runs, decorations, text, text_props, lines and the instance.
+		// skb_layout_cache_destroy() frees them exactly this way -- the cache
+		// owns its layouts, and compaction is the other place it drops one.
+		skb_layout_destroy(cached_layout->layout);
+
 		// Clear and return to freelist.
 		memset(cached_layout, 0, sizeof(skb__cached_layout_t));
 		cached_layout->lru.next = cache->layouts_freelist;
