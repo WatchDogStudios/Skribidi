@@ -331,6 +331,7 @@ skb_font_collection_t* skb_font_collection_create(void)
 
 	result->id = ++id;
 	result->fonts_free_list = SKB_INVALID_INDEX;
+	memset(result->family_fallback, 0xFF, sizeof(result->family_fallback));
 
 	return result;
 }
@@ -722,23 +723,29 @@ int32_t skb__match_fonts(
 		if (exact_weight_match) {
 			selected_weight = requested_weight_value;
 		} else {
-			if (requested_weight_value >= 400 && requested_weight_value < 450 && has_500) {
-				selected_weight = 500;
-			} else if (requested_weight_value >= 450 && requested_weight_value <= 450 && has_400) {
-				selected_weight = 400;
-			} else {
-				// Nearest
-				if (requested_weight_value <= 450) {
-					if (nearest_lighter_error < INT32_MAX)
-						selected_weight = nearest_lighter;
-					else if (nearest_darker_error < INT32_MAX)
-						selected_weight = nearest_darker;
-				} else {
-					if (nearest_darker_error < INT32_MAX)
-						selected_weight = nearest_darker;
-					else if (nearest_lighter_error < INT32_MAX)
-						selected_weight = nearest_lighter;
-				}
+			// DirectWrite-style NEAREST weight, ties resolved DARKER for
+			// requests >= 400 and LIGHTER below — what Chrome-on-Windows
+			// actually does (CEF-verified): Segoe UI at font-weight:500 with
+			// faces {350,400,600,700} selects SEMIBOLD 600 (equal 100
+			// distance to 400 and 600, darker wins the tie), while a family
+			// shipping only {400,700} still selects 400 for a 500 request
+			// (100 < 200 — the links/buttons-at-500 case stays regular).
+			// This subsumes the CSS L4 400<->500 special pair: a 400 request
+			// on {500,700} picks 500 by plain nearest.
+			(void)has_400; (void)has_500;
+			const bool has_lighter = nearest_lighter_error < INT32_MAX;
+			const bool has_darker = nearest_darker_error < INT32_MAX;
+			if (has_lighter && has_darker) {
+				if (nearest_darker_error < nearest_lighter_error)
+					selected_weight = nearest_darker;
+				else if (nearest_lighter_error < nearest_darker_error)
+					selected_weight = nearest_lighter;
+				else
+					selected_weight = (requested_weight_value >= 400) ? nearest_darker : nearest_lighter;
+			} else if (has_darker) {
+				selected_weight = nearest_darker;
+			} else if (has_lighter) {
+				selected_weight = nearest_lighter;
 			}
 		}
 
@@ -785,6 +792,37 @@ bool skb_font_collection_font_has_codepoint(const skb_font_collection_t* font_co
 {
 	const skb_font_t* font = skb__get_font_by_handle(font_collection, font_handle);
 	return font && hb_set_has(font->unicodes, codepoint);
+}
+
+void skb_font_collection_set_family_fallback(skb_font_collection_t* font_collection, uint8_t font_family, uint8_t fallback_family)
+{
+	assert(font_collection);
+	if (font_family == fallback_family)
+		return; // no self-loops
+	font_collection->family_fallback[font_family] = fallback_family;
+}
+
+uint8_t skb_font_collection_get_family_fallback(const skb_font_collection_t* font_collection, uint8_t font_family)
+{
+	assert(font_collection);
+	return font_collection->family_fallback[font_family];
+}
+
+bool skb_font_collection_restrict_font_unicodes(skb_font_collection_t* font_collection, skb_font_handle_t font_handle, const uint32_t* range_pairs, int32_t ranges_count)
+{
+	skb_font_t* font = skb__get_font_by_handle(font_collection, font_handle);
+	if (!font || !range_pairs || ranges_count <= 0)
+		return false;
+	hb_set_t* allowed = hb_set_create();
+	for (int32_t i = 0; i < ranges_count; i++) {
+		const uint32_t start = range_pairs[i * 2];
+		const uint32_t end = range_pairs[i * 2 + 1];
+		if (start <= end)
+			hb_set_add_range(allowed, start, end);
+	}
+	hb_set_intersect(font->unicodes, allowed);
+	hb_set_destroy(allowed);
+	return true;
 }
 
 skb_font_handle_t skb_font_collection_get_default_font(skb_font_collection_t* font_collection, uint8_t font_family)

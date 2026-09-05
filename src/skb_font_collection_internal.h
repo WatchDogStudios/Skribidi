@@ -24,6 +24,11 @@ typedef struct skb_font_collection_t {
 	skb_font_fallback_func_t* fallback_func;	// Function to call when no fonts are found.
 	void* fallback_context;						// Context passed to the fallback function.
 
+	// Per-family fallback edges (CSS font-family stack order). 0xFF = none.
+	// Consulted by per-codepoint font selection when no font of the requested
+	// family covers a codepoint (e.g. a unicode-range-restricted face).
+	uint8_t family_fallback[256];
+
 } skb_font_collection_t;
 
 typedef struct skb_font_t {

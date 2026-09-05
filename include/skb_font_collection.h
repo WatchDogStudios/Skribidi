@@ -363,6 +363,34 @@ int32_t skb_font_collection_match_fonts(
 bool skb_font_collection_font_has_codepoint(const skb_font_collection_t* font_collection, skb_font_handle_t font_handle, uint32_t codepoint);
 
 /**
+ * Restricts the font's usable codepoint set to the given inclusive ranges
+ * (CSS @font-face unicode-range). The font's coverage set is intersected with
+ * the ranges, so per-codepoint font selection skips this font for codepoints
+ * outside every range even when its cmap covers them. Irreversible for the
+ * font instance (re-add the font to widen again).
+ * @param font_collection font collection to change.
+ * @param font_handle font to restrict.
+ * @param range_pairs array of ranges as (start,end) pairs, 2*ranges_count entries.
+ * @param ranges_count number of ranges.
+ * @return true if the font exists and the restriction was applied.
+ */
+bool skb_font_collection_restrict_font_unicodes(skb_font_collection_t* font_collection, skb_font_handle_t font_handle, const uint32_t* range_pairs, int32_t ranges_count);
+
+/**
+ * Sets a per-family fallback edge (CSS font-family stack order): when
+ * per-codepoint font selection finds no font of `font_family` covering a
+ * codepoint, it retries with `fallback_family` (chains up to a few hops).
+ * SKB_FAMILY_FALLBACK_NONE (0xFF) clears the edge. Self-edges are ignored.
+ * @param font_collection font collection to change.
+ * @param font_family family the edge starts from.
+ * @param fallback_family family to try next.
+ */
+void skb_font_collection_set_family_fallback(skb_font_collection_t* font_collection, uint8_t font_family, uint8_t fallback_family);
+
+/** Returns the fallback family for a family, or 0xFF when none is set. */
+uint8_t skb_font_collection_get_family_fallback(const skb_font_collection_t* font_collection, uint8_t font_family);
+
+/**
  * Returns default font for specified font family.
  * The default font is the first added font.
  * @param font_collection font collection to change.

@@ -421,18 +421,49 @@ static void skb__itemize(skb__layout_build_context_t* build_context, skb_layout_
 							// Split run based on which font can be used.
 							int32_t font_run_start = text_range.start;
 							skb_font_handle_t cur_font_handle = 0;
+							// Per-run cache of family-fallback matches (one match_fonts per
+							// fallback hop per run, not per codepoint).
+							skb_font_handle_t fb_fonts[4][8];
+							int32_t fb_counts[4] = {0};
+							bool fb_matched[4] = {false, false, false, false};
 
 							for (int32_t j = text_range.start; j < text_range.end; j++) {
 								// Treat control characters are space for font selection, since fonts dont have glyphs for control chars.
 								// Missing glyph would break runs, and cause missing glyphs. During rendering we do treat control chars as spaces too.
 								const uint32_t codepoint = layout->text_props[j].flags & SKB_TEXT_PROP_CONTROL ? 32 : layout->text[j];
-								skb_font_handle_t font_handle = cur_font_handle;
-								if (!skb_font_collection_font_has_codepoint(layout->params.font_collection, cur_font_handle, codepoint)) {
-									// Find new font
-									for (int32_t k = 0; k < fonts_count; k++) {
-										if (skb_font_collection_font_has_codepoint(layout->params.font_collection, fonts[k], codepoint)) {
-											font_handle = fonts[k];
+								// Pick the FIRST font in stack-priority order that covers the
+								// codepoint: the requested family's fonts, then the CSS-stack
+								// family fallback edges. A sticky "keep the current font while
+								// it covers" shortcut is NOT correct across family boundaries —
+								// once a fallback font was active it kept claiming codepoints
+								// the primary face covers (CSS Fonts §5.2 walks the stack per
+								// character). Fallback family matches are cached per run below,
+								// so this stays cheap.
+								skb_font_handle_t font_handle = 0;
+								for (int32_t k = 0; k < fonts_count; k++) {
+									if (skb_font_collection_font_has_codepoint(layout->params.font_collection, fonts[k], codepoint)) {
+										font_handle = fonts[k];
+										break;
+									}
+								}
+								if (!font_handle) {
+									uint8_t fallback_family = font_family;
+									for (int32_t hop = 0; hop < 4 && !font_handle; hop++) {
+										fallback_family = skb_font_collection_get_family_fallback(layout->params.font_collection, fallback_family);
+										if (fallback_family == 0xFF)
 											break;
+										if (!fb_matched[hop]) {
+											fb_counts[hop] = skb_font_collection_match_fonts(
+												layout->params.font_collection, hb_language_to_string(run_lang), script, fallback_family,
+												font_weight, font_style, font_stretch,
+												fb_fonts[hop], SKB_COUNTOF(fb_fonts[hop]));
+											fb_matched[hop] = true;
+										}
+										for (int32_t k = 0; k < fb_counts[hop]; k++) {
+											if (skb_font_collection_font_has_codepoint(layout->params.font_collection, fb_fonts[hop][k], codepoint)) {
+												font_handle = fb_fonts[hop][k];
+												break;
+											}
 										}
 									}
 								}

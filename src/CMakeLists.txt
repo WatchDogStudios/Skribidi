@@ -32,6 +32,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(libunibreak)
 
+
 # build manually
 add_library(libunibreak STATIC)
 if(MSVC)
@@ -139,7 +140,7 @@ set(SKRIBIDI_API_FILES
 )
 
 
-add_library(skribidi ${SKRIBIDI_SOURCE_FILES} ${SKRIBIDI_API_FILES})
+add_library(skribidi STATIC ${SKRIBIDI_SOURCE_FILES} ${SKRIBIDI_API_FILES})
 
 target_include_directories(skribidi
   PUBLIC
@@ -203,3 +204,45 @@ install(
   FILES "${CMAKE_CURRENT_BINARY_DIR}/skribidiConfigVersion.cmake"
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/skribidi"
 )
+
+# These three are FetchContent dependencies: they live under the BINARY dir, so
+# set_compiler_flags_for_subdir_targets() (which walks the source tree) never
+# sees them, and they each pin their own CXX_STANDARD / -Werror, which beats any
+# directory-scoped add_compile_options(). On PS5 that combination is fatal —
+# harfbuzz pins C++11 while the SDK's standard library refuses to compile below
+# C++20 — so override the targets directly, once they exist.
+# Read the global property directly: this CMakeLists never calls ns_cmake_init(),
+# so the NS_CMAKE_* convenience VARIABLES are not defined in this scope.
+get_property(_tp_is_console GLOBAL PROPERTY NS_CMAKE_PLATFORM_CONSOLE)
+if(_tp_is_console)
+	# skribidi itself is a source-tree target rather than a FetchContent one, but it
+	# has the same problem: its own -Wunused-function trips the platform's
+	# WarningsAsErrors. Included here so the whole text stack is handled in one place.
+	foreach(_tp_target harfbuzz SheenBidi libunibreak skribidi budouxc)
+		if(NOT TARGET ${_tp_target})
+			message(WARNING "Skribidi console overrides: target '${_tp_target}' does not exist at this point — its console flags will NOT be applied.")
+		endif()
+		if(TARGET ${_tp_target})
+			get_target_property(_tp_type ${_tp_target} TYPE)
+			if(NOT _tp_type STREQUAL "INTERFACE_LIBRARY" AND NOT _tp_type STREQUAL "UTILITY")
+				if(CMAKE_CXX_STANDARD)
+					set_target_properties(${_tp_target} PROPERTIES CXX_STANDARD ${CMAKE_CXX_STANDARD})
+				endif()
+				# Their warnings are not ours to fix.
+				#
+				# This must be the COMPILE_WARNING_AS_ERROR property, NOT a -Wno-error
+				# compile option. Passing the flag does work — it lands in the vcxproj as
+				# <DisableSpecificWarnings>error</DisableSpecificWarnings> — but the
+				# Prospero platform also emits <WarningsAsErrors>true</WarningsAsErrors>,
+				# which puts -Werror LATER on the command line and wins. Only clearing
+				# the MSBuild property itself actually turns it off.
+				set_target_properties(${_tp_target} PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
+				# PS5 has no getenv(); harfbuzz gates every use behind HB_NO_GETENV.
+				if(_tp_target STREQUAL "harfbuzz")
+					target_compile_definitions(${_tp_target} PRIVATE HB_NO_GETENV)
+				endif()
+			endif()
+			unset(_tp_type)
+		endif()
+	endforeach()
+endif()

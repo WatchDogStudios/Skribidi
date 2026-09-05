@@ -41,8 +41,17 @@ message(STATUS "CMake C++ compiler: ${CMAKE_CXX_COMPILER_ID}")
 message(STATUS "CMake system name: ${CMAKE_SYSTEM_NAME}")
 message(STATUS "CMake host system processor: ${CMAKE_HOST_SYSTEM_PROCESSOR}")
 
-# static link
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+# Match the engine's dynamic CRT selection on Windows so Skribidi and its
+# fetched sub-dependencies can link cleanly into APHTML without /MT(d) vs /MD(d)
+# mismatches.
+#
+# Only as a DEFAULT: this scope also governs the harfbuzz, SheenBidi and
+# libunibreak sub-dependencies fetched below, so setting it unconditionally
+# overrode the platform's choice for four targets at once. Consoles select the
+# release CRT in every configuration and were left with /MDd here.
+if(MSVC AND NOT CMAKE_MSVC_RUNTIME_LIBRARY)
+	set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
 
 if(MSVC)
 	# Make Release mode emit PDB for compiled artifacts
