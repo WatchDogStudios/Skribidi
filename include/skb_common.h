@@ -57,6 +57,8 @@ typedef enum {
 	SKB_WRAP_WORD,
 	/** Wrap text at word boundaries. If a single word is longer than the layout box, it will be wrapped at a character. */
 	SKB_WRAP_WORD_CHAR,
+	/** Aperture: CSS `word-break: break-all` -- every grapheme boundary is a break opportunity. */
+	SKB_WRAP_BREAK_ALL,
 } skb_text_wrap_t;
 
 /** Enum describing how the text overflowing the layout box is handled. */

@@ -2245,6 +2245,9 @@ void skb__layout_lines(skb__layout_build_context_t* build_context, skb_layout_t*
 			}
 			if (layout->text_props[cp_offset].flags & SKB_TEXT_PROP_ALLOW_LINE_BREAK)
 				break;
+			// Aperture: word-break: break-all fills lines grapheme by grapheme.
+			if (text_wrap == SKB_WRAP_BREAK_ALL && (layout->text_props[cp_offset].flags & SKB_TEXT_PROP_GRAPHEME_BREAK))
+				break;
 		}
 
 		if (text_wrap == SKB_WRAP_WORD_CHAR && run_width > line_break_width) {
