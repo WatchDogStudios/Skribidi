@@ -67,6 +67,18 @@ skb_attribute_t skb_attribute_make_font_family(uint8_t family)
 	return attribute;
 }
 
+skb_attribute_t skb_attribute_make_font_family_fallback(const uint8_t* families, int32_t families_count)
+{
+	skb_attribute_t attribute;
+	SKB_ZERO_STRUCT(&attribute); // Makes sure that the padding (and unused slots) get zeroed too, the attribute is hashed as bytes.
+	attribute.font_family_fallback.kind = SKB_ATTRIBUTE_FONT_FAMILY_FALLBACK;
+	const int32_t count = families ? skb_clampi(families_count, 0, SKB_MAX_FONT_FAMILY_FALLBACKS) : 0;
+	attribute.font_family_fallback.families_count = (uint8_t)count;
+	for (int32_t i = 0; i < count; i++)
+		attribute.font_family_fallback.families[i] = families[i];
+	return attribute;
+}
+
 skb_attribute_t skb_attribute_make_font_size(float size)
 {
 	skb_attribute_t attribute;
@@ -547,6 +559,12 @@ uint8_t skb_attributes_get_font_family(const skb_attribute_set_t attributes, con
 {
 	const skb_attribute_t* attr = skb__get_attribute_by_kind(SKB_ATTRIBUTE_FONT_FAMILY, attributes, collection);
 	return attr ? attr->font_family.family : SKB_FONT_FAMILY_DEFAULT;
+}
+
+const skb_attribute_font_family_fallback_t* skb_attributes_get_font_family_fallback(const skb_attribute_set_t attributes, const skb_attribute_collection_t* collection)
+{
+	const skb_attribute_t* attr = skb__get_attribute_by_kind(SKB_ATTRIBUTE_FONT_FAMILY_FALLBACK, attributes, collection);
+	return attr ? &attr->font_family_fallback : NULL;
 }
 
 float skb_attributes_get_font_size(const skb_attribute_set_t attributes, const skb_attribute_collection_t* collection)

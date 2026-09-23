@@ -63,6 +63,25 @@ typedef struct skb_attribute_font_family_t {
 	uint8_t family;
 } skb_attribute_font_family_t;
 
+/** Maximum number of fallback families carried by skb_attribute_font_family_fallback_t. */
+#define SKB_MAX_FONT_FAMILY_FALLBACKS 8
+
+/**
+ * Font family fallback chain attribute.
+ * The families that follow the primary font family in a CSS font-family stack, in priority order.
+ * When no font of the primary family covers a codepoint, per-codepoint font selection walks this
+ * chain instead of the collection-wide family fallback edges (see skb_font_collection_set_family_fallback()),
+ * so two stacks that share a primary family resolve their fallbacks independently.
+ */
+typedef struct skb_attribute_font_family_fallback_t {
+	// Attribute kind tag, must be first.
+	uint32_t kind;
+	/** Number of valid entries in families. 0 = the stack has no fallback family. */
+	uint8_t families_count;
+	/** Fallback font families in priority order. */
+	uint8_t families[SKB_MAX_FONT_FAMILY_FALLBACKS];
+} skb_attribute_font_family_fallback_t;
+
 /**
  * Font size attribute.
  * Subset of https://drafts.csswg.org/css-fonts/
@@ -480,6 +499,8 @@ typedef enum {
 	SKB_ATTRIBUTE_LANG = SKB_TAG('l','a','n','g'),
 	/** Tag for skb_attribute_font_t */
 	SKB_ATTRIBUTE_FONT_FAMILY = SKB_TAG('f','o','n','t'),
+	/** Key for skb_attribute_font_family_fallback_t */
+	SKB_ATTRIBUTE_FONT_FAMILY_FALLBACK = SKB_TAG('f','f','b','k'),
 	/** Tag for skb_attribute_font_t */
 	SKB_ATTRIBUTE_FONT_STRETCH = SKB_TAG('f','s','t','r'),
 	/** Tag for skb_attribute_font_size_t */
@@ -549,6 +570,7 @@ typedef union skb_attribute_t {
 	skb_attribute_text_base_direction_t text_base_direction;
 	skb_attribute_lang_t lang;
 	skb_attribute_font_family_t font_family;
+	skb_attribute_font_family_fallback_t font_family_fallback;
 	skb_attribute_font_size_t font_size;
 	skb_attribute_font_size_scaling_t font_size_scaling;
 	skb_attribute_font_weight_t font_weight;
@@ -615,6 +637,13 @@ skb_attribute_t skb_attribute_make_lang(const char* lang);
 
 /** @returns new font family attribute. See skb_attribute_font_t */
 skb_attribute_t skb_attribute_make_font_family(uint8_t family);
+
+/**
+ * @returns new font family fallback chain attribute. See skb_attribute_font_family_fallback_t
+ * @param families fallback families in priority order (may be NULL when families_count is 0).
+ * @param families_count number of families, clamped to SKB_MAX_FONT_FAMILY_FALLBACKS.
+ */
+skb_attribute_t skb_attribute_make_font_family_fallback(const uint8_t* families, int32_t families_count);
 
 /** @returns new font size attribute. See skb_attribute_font_t */
 skb_attribute_t skb_attribute_make_font_size(float size);
@@ -741,6 +770,15 @@ const char* skb_attributes_get_lang(const skb_attribute_set_t attributes, const 
  * @return first found attribute or default value.
  */
 uint8_t skb_attributes_get_font_family(const skb_attribute_set_t attributes, const skb_attribute_collection_t* collection);
+
+/**
+ * Returns the first font family fallback chain attribute, or NULL if the set has none
+ * (in which case per-codepoint font selection uses the collection-wide family fallback edges).
+ * @param attributes attribute set where to look for the attributes from.
+ * @param collection attribute collection which is used to lookup attribute references.
+ * @return pointer to the found attribute (owned by the attribute set), or NULL.
+ */
+const skb_attribute_font_family_fallback_t* skb_attributes_get_font_family_fallback(const skb_attribute_set_t attributes, const skb_attribute_collection_t* collection);
 
 /**
  * Returns first font text attribute or default value if not found.

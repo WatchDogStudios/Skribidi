@@ -101,7 +101,11 @@ typedef enum {
 } skb__item_flags_t;
 
 typedef struct skb__item_glyph_t {
-	const skb_font_t* font;
+	// The font is resolved from (collection, handle) at rasterize time rather than cached as a
+	// pointer: adding a font to the collection may reallocate its font array, and a font can be
+	// removed while an item is still waiting to be rasterized.
+	const skb_font_collection_t* font_collection;
+	skb_font_handle_t font_handle;
 	uint32_t gid;
 	float clamped_font_size;
 } skb__item_glyph_t;
@@ -1054,7 +1058,8 @@ skb_quad_t skb_image_atlas_get_glyph_quad(
 
 		item = &atlas->items[item_idx];
 		item->type = SKB__ITEM_TYPE_GLYPH;
-		item->glyph.font = font;
+		item->glyph.font_collection = font_collection;
+		item->glyph.font_handle = font_handle;
 		item->glyph.gid = glyph_id;
 		item->glyph.clamped_font_size = clamped_font_size;
 		item->width = (int16_t)bounds.width;
@@ -1515,14 +1520,18 @@ bool skb_image_atlas_rasterize_missing_items(skb_image_atlas_t* atlas, skb_temp_
 				assert(texture->image.stride_bytes == texture->image.width * texture->image.bpp);
 
 				if (item->type == SKB__ITEM_TYPE_GLYPH) {
-					// Rasterize glyph
-					if (item->flags & SKB__ITEM_IS_COLOR) {
+					// Rasterize glyph. A font removed since the slot was reserved leaves the slot empty.
+					const skb_font_t* glyph_font = skb_font_collection_get_font(item->glyph.font_collection, item->glyph.font_handle);
+					if (!glyph_font) {
+						for (int32_t row = 0; row < target.height; row++)
+							memset(target.buffer + row * target.stride_bytes, 0, (size_t)target.width * target.bpp);
+					} else if (item->flags & SKB__ITEM_IS_COLOR) {
 						skb_rasterizer_draw_color_glyph(
-							rasterizer, temp_alloc, item->glyph.gid, item->glyph.font, item->glyph.clamped_font_size, alpha_mode,
+							rasterizer, temp_alloc, item->glyph.gid, glyph_font, item->glyph.clamped_font_size, alpha_mode,
 							-item->geom_offset_x, -item->geom_offset_y, &target);
 					} else {
 						skb_rasterizer_draw_alpha_glyph(
-							rasterizer, temp_alloc, item->glyph.gid, item->glyph.font, item->glyph.clamped_font_size, alpha_mode,
+							rasterizer, temp_alloc, item->glyph.gid, glyph_font, item->glyph.clamped_font_size, alpha_mode,
 							-item->geom_offset_x, -item->geom_offset_y, &target);
 					}
 				} else if (item->type == SKB__ITEM_TYPE_ICON) {

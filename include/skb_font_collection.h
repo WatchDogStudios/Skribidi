@@ -391,6 +391,22 @@ void skb_font_collection_set_family_fallback(skb_font_collection_t* font_collect
 uint8_t skb_font_collection_get_family_fallback(const skb_font_collection_t* font_collection, uint8_t font_family);
 
 /**
+ * Last-resort font selection for a codepoint that no font of the requested family stack covers:
+ * searches every font in the collection, regardless of family (the equivalent of a browser's
+ * system font fallback). Among the fonts covering the codepoint, prefers the requested style
+ * (italic/oblique vs normal), then the nearest weight, then collection order.
+ * Emoji-family fonts are only considered when no other font covers the codepoint.
+ * @param font_collection font collection to use.
+ * @param codepoint codepoint that needs a font.
+ * @param requested_weight requested font weight.
+ * @param requested_style requested font style.
+ * @return handle of the selected font, or 0 if no font in the collection covers the codepoint.
+ */
+skb_font_handle_t skb_font_collection_find_font_for_codepoint(
+	const skb_font_collection_t* font_collection, uint32_t codepoint,
+	skb_weight_t requested_weight, skb_style_t requested_style);
+
+/**
  * Returns default font for specified font family.
  * The default font is the first added font.
  * @param font_collection font collection to change.

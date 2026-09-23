@@ -228,8 +228,11 @@ static skb_font_t* skb__font_create(skb_font_collection_t* font_collection, hb_f
 	}
 	font->name[name_len] = '\0';
 
-	// Hash name for ID
-	font->hash = skb_hash64_append_str(skb_hash64_empty(), font->name);
+	// Hash name for ID. The handle (index + generation) is mixed in because several faces are
+	// commonly registered under ONE name (e.g. the regular, bold and italic files of a CSS family,
+	// or synthetic/variable instances of a face) and the hash keys the glyph image atlas: a
+	// name-only hash made those faces share rasterized glyphs.
+	font->hash = skb_hash64_append_uint32(skb_hash64_append_str(skb_hash64_empty(), font->name), font->handle);
 
 	// Store supported scripts
 	font->scripts = scripts.tags;
@@ -806,6 +809,33 @@ uint8_t skb_font_collection_get_family_fallback(const skb_font_collection_t* fon
 {
 	assert(font_collection);
 	return font_collection->family_fallback[font_family];
+}
+
+skb_font_handle_t skb_font_collection_find_font_for_codepoint(
+	const skb_font_collection_t* font_collection, uint32_t codepoint,
+	skb_weight_t requested_weight, skb_style_t requested_style)
+{
+	assert(font_collection);
+	const int32_t requested_weight_value = g_weight_to_value[skb_clampi((int32_t)requested_weight, 0, SKB_COUNTOF(g_weight_to_value)-1)];
+	const bool requested_slanted = requested_style != SKB_STYLE_NORMAL;
+
+	skb_font_handle_t best = 0;
+	int32_t best_score = INT32_MAX;
+	for (int32_t font_idx = 0; font_idx < font_collection->fonts_count; font_idx++) {
+		const skb_font_t* font = &font_collection->fonts[font_idx];
+		if (!font->hb_font || !font->unicodes || !hb_set_has(font->unicodes, codepoint))
+			continue;
+		const bool slanted = font->style != SKB_STYLE_NORMAL;
+		// Lower is better: family class, then style mismatch, then weight distance.
+		const int32_t score = (font->font_family == SKB_FONT_FAMILY_EMOJI ? 1 << 24 : 0)
+			+ (slanted != requested_slanted ? 1 << 16 : 0)
+			+ skb_absi(font->weight - requested_weight_value);
+		if (score < best_score) {
+			best_score = score;
+			best = font->handle;
+		}
+	}
+	return best;
 }
 
 bool skb_font_collection_restrict_font_unicodes(skb_font_collection_t* font_collection, skb_font_handle_t font_handle, const uint32_t* range_pairs, int32_t ranges_count)

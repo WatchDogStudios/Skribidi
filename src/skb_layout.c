@@ -418,14 +418,39 @@ static void skb__itemize(skb__layout_build_context_t* build_context, skb_layout_
 								fonts_count++;
 							}
 
+							// Fallback families after the primary one. The run's own CSS stack
+							// (SKB_ATTRIBUTE_FONT_FAMILY_FALLBACK) wins; without it, walk the
+							// collection-wide edges. Emoji runs select from the emoji family and
+							// never take the text stack.
+							uint8_t fb_families[SKB_MAX_FONT_FAMILY_FALLBACKS];
+							int32_t fb_families_count = 0;
+							{
+								const skb_attribute_font_family_fallback_t* stack_fallback = has_emoji ? NULL
+									: skb_attributes_get_font_family_fallback(content_run_attributes, layout->params.attribute_collection);
+								if (stack_fallback) {
+									fb_families_count = skb_mini((int32_t)stack_fallback->families_count, SKB_MAX_FONT_FAMILY_FALLBACKS);
+									for (int32_t k = 0; k < fb_families_count; k++)
+										fb_families[k] = stack_fallback->families[k];
+								} else {
+									uint8_t edge_family = font_family;
+									while (fb_families_count < SKB_MAX_FONT_FAMILY_FALLBACKS) {
+										edge_family = skb_font_collection_get_family_fallback(layout->params.font_collection, edge_family);
+										if (edge_family == 0xFF || edge_family == font_family)
+											break; // end of chain, or a cycle back to the primary family
+										fb_families[fb_families_count++] = edge_family;
+									}
+								}
+							}
+
 							// Split run based on which font can be used.
 							int32_t font_run_start = text_range.start;
 							skb_font_handle_t cur_font_handle = 0;
 							// Per-run cache of family-fallback matches (one match_fonts per
 							// fallback hop per run, not per codepoint).
-							skb_font_handle_t fb_fonts[4][8];
-							int32_t fb_counts[4] = {0};
-							bool fb_matched[4] = {false, false, false, false};
+							skb_font_handle_t fb_fonts[SKB_MAX_FONT_FAMILY_FALLBACKS][8];
+							int32_t fb_counts[SKB_MAX_FONT_FAMILY_FALLBACKS] = {0};
+							bool fb_matched[SKB_MAX_FONT_FAMILY_FALLBACKS] = {0};
+							skb_font_handle_t last_resort_font = 0;
 
 							for (int32_t j = text_range.start; j < text_range.end; j++) {
 								// Treat control characters are space for font selection, since fonts dont have glyphs for control chars.
@@ -447,11 +472,8 @@ static void skb__itemize(skb__layout_build_context_t* build_context, skb_layout_
 									}
 								}
 								if (!font_handle) {
-									uint8_t fallback_family = font_family;
-									for (int32_t hop = 0; hop < 4 && !font_handle; hop++) {
-										fallback_family = skb_font_collection_get_family_fallback(layout->params.font_collection, fallback_family);
-										if (fallback_family == 0xFF)
-											break;
+									for (int32_t hop = 0; hop < fb_families_count && !font_handle; hop++) {
+										const uint8_t fallback_family = fb_families[hop];
 										if (!fb_matched[hop]) {
 											fb_counts[hop] = skb_font_collection_match_fonts(
 												layout->params.font_collection, hb_language_to_string(run_lang), script, fallback_family,
@@ -465,6 +487,20 @@ static void skb__itemize(skb__layout_build_context_t* build_context, skb_layout_
 												break;
 											}
 										}
+									}
+								}
+								// Nothing in the stack covers the codepoint: search the whole collection, like a
+								// browser's system font fallback. The last hit is tried first, so a run of
+								// fallback text costs one collection scan, not one per codepoint.
+								if (!font_handle) {
+									if (last_resort_font && skb_font_collection_font_has_codepoint(layout->params.font_collection, last_resort_font, codepoint)) {
+										font_handle = last_resort_font;
+									} else {
+										const skb_font_handle_t found = skb_font_collection_find_font_for_codepoint(
+											layout->params.font_collection, codepoint, font_weight, font_style);
+										if (found)
+											last_resort_font = found;
+										font_handle = found;
 									}
 								}
 								// If no font supports the codepoint, arbitrarily pick the first one, so that we get at least invalid glyphs as output.
