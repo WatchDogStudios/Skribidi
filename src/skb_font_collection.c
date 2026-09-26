@@ -67,6 +67,14 @@ static void skb__append_tags_from_unicodes(hb_set_t* unicodes, skb__sb_tag_array
 	hb_codepoint_t first = HB_SET_VALUE_INVALID;
 	hb_codepoint_t last = HB_SET_VALUE_INVALID;
 
+	// Each distinct Unicode script maps to the same tags every time, and the
+	// tag lookup below brute-forces every SBScript: resolve each script once.
+	// A CJK face has thousands of codepoint ranges but a few dozen scripts;
+	// converting per range cost 10-15 ms per face (and per synthetic
+	// bold/oblique instance of it).
+	hb_script_t seen_scripts[256];
+	int32_t seen_count = 0;
+
 	while (hb_set_next_range (unicodes, &first, &last)) {
 
 		int32_t unicode_count = 0;
@@ -79,6 +87,14 @@ static void skb__append_tags_from_unicodes(hb_set_t* unicodes, skb__sb_tag_array
 		}
 
 		for (int32_t j = 0; j < unicode_count; j++) {
+			bool seen = false;
+			for (int32_t k = 0; k < seen_count && !seen; k++)
+				seen = seen_scripts[k] == unicode_scripts[j];
+			if (seen)
+				continue;
+			if (seen_count < (int32_t)SKB_COUNTOF(seen_scripts))
+				seen_scripts[seen_count++] = unicode_scripts[j];
+
 			hb_tag_t ot_scripts[4];
 			uint32_t ot_scripts_count = 4;
 			hb_ot_tags_from_script_and_language (unicode_scripts[j], HB_LANGUAGE_INVALID, &ot_scripts_count, ot_scripts, NULL, NULL);
@@ -303,24 +319,12 @@ static skb_font_t* skb__font_create(skb_font_collection_t* font_collection, hb_f
 	font->caret_metrics.offset = (float)caret_offset * font->upem_scale;
 	font->caret_metrics.slope = -(float)caret_run / (float)caret_rise;
 
-	// Cache glyph bounds
+	// Glyph bounds are read on demand (skb_font_get_glyph_bounds). Reading the
+	// extents of EVERY glyph here cost ~20 ms per CJK face (17k glyphs) at
+	// registration, and again for each synthetic bold/oblique or variable
+	// instance created from it at first use.
 	font->glyph_bounds_count = (int32_t)hb_face_get_glyph_count(face);
-	if (font->glyph_bounds_count > 0) {
-		font->glyph_bounds = skb_malloc(sizeof(skb_rect2_t) * font->glyph_bounds_count);
-		memset(font->glyph_bounds, 0, sizeof(skb_rect2_t) * font->glyph_bounds_count);
-
-		for (int32_t gid = 0; gid < font->glyph_bounds_count; gid++) {
-			hb_glyph_extents_t extents;
-			if (hb_font_get_glyph_extents(hb_font, gid, &extents)) {
-				font->glyph_bounds[gid] = (skb_rect2_t) {
-					.x = (float)extents.x_bearing * font->upem_scale,
-					.y = -(float)extents.y_bearing * font->upem_scale,
-					.width = (float)extents.width * font->upem_scale,
-					.height = -(float)extents.height * font->upem_scale,
-				};
-			}
-		}
-	}
+	font->glyph_bounds = NULL;
 
 	return font;
 }
@@ -881,13 +885,20 @@ skb_rect2_t skb_font_get_glyph_bounds(const skb_font_collection_t* font_collecti
 	const skb_font_t* font = skb__get_font_by_handle(font_collection, font_handle);
 	if (!font || glyph_id == 0 || glyph_id >= (uint32_t)font->glyph_bounds_count) return (skb_rect2_t) { 0 };
 
-	const skb_rect2_t* bounds = &font->glyph_bounds[glyph_id];
+	// hb_font_t is immutable once created, so this is safe from any thread.
+	hb_glyph_extents_t extents;
+	if (!hb_font_get_glyph_extents(font->hb_font, glyph_id, &extents)) return (skb_rect2_t) { 0 };
 
+	// Same arithmetic as the old per-face cache (unit bounds, then size).
+	const float x = (float)extents.x_bearing * font->upem_scale;
+	const float y = -(float)extents.y_bearing * font->upem_scale;
+	const float width = (float)extents.width * font->upem_scale;
+	const float height = -(float)extents.height * font->upem_scale;
 	return (skb_rect2_t) {
-		.x = bounds->x * font_size,
-		.y = bounds->y * font_size,
-		.width = bounds->width * font_size,
-		.height = bounds->height * font_size,
+		.x = x * font_size,
+		.y = y * font_size,
+		.width = width * font_size,
+		.height = height * font_size,
 	};
 }
 
