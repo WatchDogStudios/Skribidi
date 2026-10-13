@@ -591,6 +591,42 @@ static void skb__collect_font_features(const skb_attribute_set_t attributes, con
 		skb__add_font_feature(features, features_count, results[i]->font_feature.tag, results[i]->font_feature.value);
 }
 
+// Synthesized tabular figures (CSS `font-variant-numeric: tabular-nums`, OpenType `tnum`):
+// a digit the font did not substitute (no `tnum` lookup, so it is still the cmap glyph) gets
+// the widest digit's advance, so a ticking counter keeps its width. The glyph keeps its
+// left side bearing (the extra space trails it): Aperture's measurer reads glyph x offsets
+// as pen movement, so centring through x_offset would widen the measured run.
+// A font whose default digits are tabular already is unchanged (every digit is the widest).
+// ponytail: a `tnum` done purely in GPOS (no substitution) is padded too; no shipped font
+// does that, check hb_ot_layout_table_find_feature if one turns up (needs the hb-ot build).
+static void skb__synthesize_tabular_digits(const skb_font_t* font, hb_buffer_t* buffer, const uint32_t* text)
+{
+	hb_codepoint_t digit_gids[10] = {0};
+	hb_position_t widest = 0;
+	for (uint32_t d = 0; d < 10; d++) {
+		if (hb_font_get_nominal_glyph(font->hb_font, '0' + d, &digit_gids[d])) {
+			const hb_position_t advance = hb_font_get_glyph_h_advance(font->hb_font, digit_gids[d]);
+			if (advance > widest)
+				widest = advance;
+		}
+	}
+	if (widest <= 0)
+		return;
+
+	const uint32_t count = hb_buffer_get_length(buffer);
+	const hb_glyph_info_t* info = hb_buffer_get_glyph_infos(buffer, NULL);
+	hb_glyph_position_t* pos = hb_buffer_get_glyph_positions(buffer, NULL);
+	for (uint32_t i = 0; i < count; i++) {
+		const uint32_t cp = text[info[i].cluster];
+		if (cp < '0' || cp > '9' || info[i].codepoint != digit_gids[cp - '0'] || pos[i].x_advance >= widest)
+			continue;
+		// One glyph per digit only: a digit in a multi-glyph cluster keeps the shaper's positions.
+		if ((i > 0 && info[i-1].cluster == info[i].cluster) || (i + 1 < count && info[i+1].cluster == info[i].cluster))
+			continue;
+		pos[i].x_advance = widest;
+	}
+}
+
 static void skb__shape_run(
 	skb__layout_build_context_t* build_context,
 	skb_layout_t* layout,
@@ -668,6 +704,15 @@ static void skb__shape_run(
 	hb_buffer_set_flags(buffer, flags);
 
 	hb_shape(font->hb_font, buffer, features, features_count);
+
+	// The last `tnum` setting wins (font-feature-settings overrides font-variant-numeric).
+	bool tabular_digits = false;
+	for (int32_t f = 0; f < features_count; f++) {
+		if (features[f].tag == HB_TAG('t','n','u','m'))
+			tabular_digits = features[f].value != 0;
+	}
+	if (tabular_digits)
+		skb__synthesize_tabular_digits(font, buffer, layout->text);
 
 	const int32_t glyph_count = (int32_t)hb_buffer_get_length(buffer);
 	const hb_glyph_info_t* glyph_info = hb_buffer_get_glyph_infos(buffer, NULL);
