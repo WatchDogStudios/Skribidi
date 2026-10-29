@@ -331,6 +331,12 @@ skb_font_handle_t skb_font_collection_add_hb_font(
  */
 bool skb_font_collection_remove_font(skb_font_collection_t* font_collection, skb_font_handle_t font_handle);
 
+/** Retain a direct handle for an exported layout. Removed fonts stop matching
+ * immediately, but their metrics and glyphs remain available until released. */
+bool skb_font_collection_retain_font(skb_font_collection_t* font_collection, skb_font_handle_t font_handle);
+/** Release a retained handle. A retired font is destroyed on its last release. */
+void skb_font_collection_release_font(skb_font_collection_t* font_collection, skb_font_handle_t font_handle);
+
 /**
  * Returns fonts matching specific font properties.
  * Script and font family are hard constraints, for the rest, we do best effort to find something compatible.

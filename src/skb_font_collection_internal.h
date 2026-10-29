@@ -35,6 +35,8 @@ typedef struct skb_font_t {
 	int32_t next_free;
 	uint32_t generation;		// Generation index used to identify stale handles.
 	skb_font_handle_t handle;	// Unique identifier of the font.
+	uint32_t retained_count;	// Exported layouts retaining this direct handle.
+	bool retired;			// Excluded from matching; destroyed after the last release.
 	uint64_t hash;				// Hash of the name, used as unique identifier.
 	char* name;					// Name of the font (file name)
 

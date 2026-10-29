@@ -118,7 +118,8 @@ static skb_font_t* skb__get_font_by_handle(const skb_font_collection_t* font_col
 {
 	uint32_t index = font & 0xffff;
 	uint32_t generation = (font >> 16) & 0xffff;
-	if ((int32_t)index < font_collection->fonts_count && font_collection->fonts[index].generation == generation)
+	if ((int32_t)index < font_collection->fonts_count && font_collection->fonts[index].generation == generation
+		&& font_collection->fonts[index].hb_font)
 		return &font_collection->fonts[index];
 	return NULL;
 }
@@ -145,7 +146,14 @@ static void skb__font_destroy(skb_font_collection_t* font_collection, skb_font_t
 	hb_font_destroy(font->hb_font);
 	memset(font, 0, sizeof(skb_font_t));
 
-	// Increate generation so that we can catch stale use.
+	// A stale glyph-cache key must never alias a new instance after a long
+	// animation wraps the handle's 16-bit generation. Permanently retire this
+	// slot at the limit; later instances use another slot instead.
+	if (generation == 0xffff) {
+		font->next_free = SKB_INVALID_INDEX;
+		return;
+	}
+	// Increase generation so that we can catch stale use.
 	font->generation = generation + 1;
 
 	// Update freelist
@@ -192,7 +200,6 @@ static skb_font_t* skb__font_create(skb_font_collection_t* font_collection, hb_f
 
 	// Get supported unicode range.
 	font->unicodes = hb_set_create();
-	hb_set_reference(font->unicodes);
 
 	// Get supported scripts from supported characters.
 	skb__sb_tag_array_t scripts = {0};
@@ -485,12 +492,33 @@ skb_font_handle_t skb_font_collection_add_hb_font(
 bool skb_font_collection_remove_font(skb_font_collection_t* font_collection, skb_font_handle_t font_handle)
 {
 	skb_font_t* font = skb__get_font_by_handle(font_collection, font_handle);
-	if (!font)
+	if (!font || font->retired)
 		return false;
 
-	skb__font_destroy(font_collection, font);
+	font->retired = true;
+	if (font->retained_count == 0)
+		skb__font_destroy(font_collection, font);
 
 	return true;
+}
+
+bool skb_font_collection_retain_font(skb_font_collection_t* font_collection, skb_font_handle_t font_handle)
+{
+	skb_font_t* font = skb__get_font_by_handle(font_collection, font_handle);
+	if (!font || font->retained_count == UINT32_MAX)
+		return false;
+	font->retained_count++;
+	return true;
+}
+
+void skb_font_collection_release_font(skb_font_collection_t* font_collection, skb_font_handle_t font_handle)
+{
+	skb_font_t* font = skb__get_font_by_handle(font_collection, font_handle);
+	if (!font || font->retained_count == 0)
+		return;
+	font->retained_count--;
+	if (font->retired && font->retained_count == 0)
+		skb__font_destroy(font_collection, font);
 }
 
 static float g_stretch_to_value[] = {
@@ -550,7 +578,7 @@ int32_t skb__match_fonts(
 	// Match script and font family.
 	for (int32_t font_idx = 0; font_idx < font_collection->fonts_count; font_idx++) {
 		const skb_font_t* font = &font_collection->fonts[font_idx];
-		if (font->font_family == requested_font_family
+		if (font->hb_font && !font->retired && font->font_family == requested_font_family
 			&& (requested_font_family == SKB_FONT_FAMILY_EMOJI || skb__supports_script(font, requested_script))) { // Ignore script for emoji fonts, as emojis are the same on each writing system.
 			if (results_count < results_cap) {
 				if (results_count > 0) {
@@ -827,7 +855,7 @@ skb_font_handle_t skb_font_collection_find_font_for_codepoint(
 	int32_t best_score = INT32_MAX;
 	for (int32_t font_idx = 0; font_idx < font_collection->fonts_count; font_idx++) {
 		const skb_font_t* font = &font_collection->fonts[font_idx];
-		if (!font->hb_font || !font->unicodes || !hb_set_has(font->unicodes, codepoint))
+		if (font->retired || !font->hb_font || !font->unicodes || !hb_set_has(font->unicodes, codepoint))
 			continue;
 		const bool slanted = font->style != SKB_STYLE_NORMAL;
 		// Lower is better: family class, then style mismatch, then weight distance.
