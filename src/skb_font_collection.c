@@ -59,7 +59,7 @@ static void skb__add_unique_script_from_ot_tag(skb__sb_tag_array_t* script_tags,
 	}
 }
 
-static void skb__append_tags_from_unicodes(hb_set_t* unicodes, skb__sb_tag_array_t* scripts)
+static void skb__append_tags_from_unicodes(const hb_set_t* unicodes, skb__sb_tag_array_t* scripts)
 {
 	hb_unicode_funcs_t* unicode_funcs = hb_unicode_funcs_get_default();
 
@@ -104,7 +104,7 @@ static void skb__append_tags_from_unicodes(hb_set_t* unicodes, skb__sb_tag_array
 		}
 	}
 
-	hb_set_destroy(unicodes);
+	// The font owns this set until skb__font_destroy; script discovery only borrows it.
 }
 
 static skb_font_handle_t skb__make_font_handle(int32_t index, uint32_t generation)
